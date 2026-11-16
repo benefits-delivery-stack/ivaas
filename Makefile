@@ -76,6 +76,10 @@ dev-adapters: ## live-develop adapters from the sibling checkout (cleanup: make 
 db-up: ## start the local docker PostgreSQL database
 	$(COMPOSE) up --wait postgres
 
+.PHONY: fakecloud-up
+fakecloud-up: ## start the local FakeCloud AWS emulator
+	$(COMPOSE) up --detach --wait fakecloud
+
 .PHONY: local-services-up
 local-services-up: ## start local PostgreSQL and OAuth/JWKS services
 	$(COMPOSE) up --detach --wait postgres mock-oauth2-server
