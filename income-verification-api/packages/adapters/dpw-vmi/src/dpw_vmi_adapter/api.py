@@ -150,7 +150,7 @@ def _managed_object_key(
 
 def _delivery_conflict(request: HttpRequest, *, delivery_id: int) -> HttpResponse:
     logger.error(
-        "Rejected conflicting DPW VMI document delivery for row %s.",
+        "Rejected conflicting DPW VMI document delivery for DpwVmiDocumentDelivery id %s.",
         delivery_id,
         extra={
             LogField.EVENT_NAME.value: "dpw_vmi.delivery.conflict",
@@ -211,7 +211,7 @@ def _handle_managed_transmission_complete(
         else "dpw_vmi.delivery.duplicate"
     )
     logger.info(
-        "DPW VMI document delivery %s in row %s.",
+        "DPW VMI document delivery %s with DpwVmiDocumentDelivery id %s.",
         acceptance,
         delivery.pk,
         extra={
