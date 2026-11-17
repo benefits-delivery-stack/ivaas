@@ -28,11 +28,13 @@ WEBHOOK_ADAPTERS = {
 def program_configuration(
     webhook_url: object = WEBHOOK_URL,
     webhook_signing_key: object = WEBHOOK_SIGNING_KEY,
+    managed_vmi_file_delivery_enabled: object = False,
 ) -> Mapping[str, Mapping[str, object]]:
     return {
         "dpw_vmi": {
             "webhook_url": webhook_url,
             "webhook_signing_key": webhook_signing_key,
+            "managed_vmi_file_delivery_enabled": managed_vmi_file_delivery_enabled,
         },
     }
 
@@ -76,6 +78,27 @@ def test_configured_programs_allows_http_in_debug_mode() -> None:
     assert result[0].webhook_url == webhook_url
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_configured_programs_reads_managed_delivery_flag(enabled: bool) -> None:
+    with override_settings(
+        PROGRAMS={PROGRAM_ID: program_configuration(managed_vmi_file_delivery_enabled=enabled)}
+    ):
+        result = configured_programs()
+
+    assert result[0].managed_vmi_file_delivery_enabled is enabled
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "false"])
+def test_configured_programs_requires_boolean_managed_delivery_flag(value: object) -> None:
+    with (
+        override_settings(
+            PROGRAMS={PROGRAM_ID: program_configuration(managed_vmi_file_delivery_enabled=value)}
+        ),
+        pytest.raises(ImproperlyConfigured, match="managed_vmi_file_delivery_enabled"),
+    ):
+        configured_programs()
+
+
 @pytest.mark.parametrize(
     "webhook_url",
     ["ftp://localhost/webhook", "http:///webhook", "http://user:password@localhost/webhook"],
@@ -110,11 +133,13 @@ def test_configured_programs_returns_all_enrolled_programs() -> None:
             program_id=PROGRAM_ID,
             webhook_url=WEBHOOK_URL,
             webhook_signing_key=WEBHOOK_SIGNING_KEY,
+            managed_vmi_file_delivery_enabled=False,
         ),
         DpwVmiProgram(
             program_id="second-program",
             webhook_url="https://second.example/webhook",
             webhook_signing_key="second-webhook-signing-key",
+            managed_vmi_file_delivery_enabled=False,
         ),
     )
 

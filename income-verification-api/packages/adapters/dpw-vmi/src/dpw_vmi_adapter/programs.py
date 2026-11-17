@@ -15,11 +15,13 @@ class DpwVmiProgram:
         program_id: Stable IVaaS program identifier.
         webhook_url: Configured destination for forwarded VMI webhooks.
         webhook_signing_key: Secret used to sign forwarded webhook bodies.
+        managed_vmi_file_delivery_enabled: Whether IVaaS acts as file delivery middleware.
     """
 
     program_id: str
     webhook_url: str
     webhook_signing_key: str
+    managed_vmi_file_delivery_enabled: bool
 
 
 def configured_programs() -> tuple[DpwVmiProgram, ...]:
@@ -36,6 +38,9 @@ def configured_programs() -> tuple[DpwVmiProgram, ...]:
                 webhook_url=_validated_webhook_url(program_id, configuration.get("webhook_url")),
                 webhook_signing_key=_validated_webhook_signing_key(
                     program_id, configuration.get("webhook_signing_key")
+                ),
+                managed_vmi_file_delivery_enabled=_validated_managed_delivery_enabled(
+                    program_id, configuration.get("managed_vmi_file_delivery_enabled")
                 ),
             )
         )
@@ -55,6 +60,15 @@ def _validated_webhook_signing_key(program_id: str, value: object) -> str:
         raise ImproperlyConfigured(
             f"PROGRAMS[{program_id!r}]['dpw_vmi']"
             "['webhook_signing_key'] must be a non-empty string."
+        )
+    return value
+
+
+def _validated_managed_delivery_enabled(program_id: str, value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ImproperlyConfigured(
+            f"PROGRAMS[{program_id!r}]['dpw_vmi']"
+            "['managed_vmi_file_delivery_enabled'] must be a boolean."
         )
     return value
 

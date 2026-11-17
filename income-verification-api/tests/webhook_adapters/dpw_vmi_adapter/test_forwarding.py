@@ -21,6 +21,7 @@ PROGRAM = DpwVmiProgram(
     program_id="test-program",
     webhook_url="https://program.example/webhook",
     webhook_signing_key="test-webhook-signing-key",
+    managed_vmi_file_delivery_enabled=False,
 )
 VMI_TIMESTAMP = "1700000000"
 IVASS_TIMESTAMP = 1_800_000_000
