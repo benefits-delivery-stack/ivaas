@@ -8,10 +8,15 @@ from django.db import models
 class DeliveryStatus(models.TextChoices):
     """Document-delivery workflow states."""
 
+    # The file is yet to be delivered to the program
     PENDING_FILE = "PENDING_FILE", "Pending file"
+    # File is delivered. Transmission Complete webhook is yet to be delivered to the program
     PENDING_WEBHOOK = "PENDING_WEBHOOK", "Pending webhook"
+    # File and Transmission Complete webhooks have been delivered to the program
     DELIVERED = "DELIVERED", "Delivered"
+    # Terminal failure due to errors delivering the file to the program
     FAILED_FILE = "FAILED_FILE", "Failed file"
+    # Terminal failure due to errors delivering the Transmission Complete webhook to the program
     FAILED_WEBHOOK = "FAILED_WEBHOOK", "Failed webhook"
 
 
