@@ -2,6 +2,27 @@
 
 Public webhook adapter for Digital Public Works Verify My Income (VMI).
 
+## Configuration
+
+### Adapter
+
+| Field | Description | Type / expected value |
+| --- | --- | --- |
+| `enabled` | Whether or not the adapter is enabled | Boolean, e.g. `True` |
+| `webhook_path` | The URL where the adapter expects to reveive webhook events | URL path string, e.g. `/dpw-vmi/v1/income-report` |
+| `webhook_api_key` | The API key the adapter uses to verify the signature of incoming webhook events | Non-empty string |
+| `webhook_timestamp_max_age_seconds` | The maximum allowed age for a webhook event| Positive integer, e.g. `300` |
+| `program_timeout_seconds` | The maximum time IVaaS will wait for a program's response to a forwarded webhook | Positive integer, e.g. `30` |
+| `s3_inbox_prefix` | The configured directory prefix that must correspond to the DPW directory configuration at onboarding | String, e.g. `incoming/` |
+
+### Program
+
+| Field | Description| Type / expected value |
+| --- |--- | --- |
+| `webhook_url` | The URL where the program expects to receive webhook events| HTTPS URL, e.g. `https://program.example/vmi-webhooks`; HTTP allowed when Django debug mode is enabled |
+| `webhook_signing_key` | The key used to sign webhook events sent from IVaaS to the program | Non-empty string |
+| `managed_vmi_file_delivery_enabled` | Whether IVaaS acts as an intermediary for file delivery, or if DPW delivers files directly to the program | Boolean, e.g. `False` |
+
 ## Webhook URL
 
 When installed, the adapter is enabled by default. Set `DPW_VMI_ADAPTER_ENABLED=False` to remove
