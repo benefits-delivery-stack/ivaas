@@ -53,7 +53,12 @@ def request_json(
         path += f"?{target.query}"
     status = None
     try:
-        connection.request("POST" if data is not None else "GET", path, data, headers or {})
+        connection.request(
+            "POST" if data is not None else "GET",
+            path,
+            data,
+            {"User-Agent": "IVaaS-E2E/1.0", **(headers or {})},
+        )
         with connection.getresponse() as response:
             status = response.status
             if 300 <= status < 400:
