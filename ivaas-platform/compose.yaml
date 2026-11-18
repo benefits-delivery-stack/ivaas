@@ -41,11 +41,17 @@ services:
   income-verification-api:
     build:
       context: ./income-verification-api
+      additional_contexts:
+        deployment: ${IVAAS_DEPLOYMENT_CONTEXT:-./deployment}
+        adapter_wheels: ${IVAAS_ADAPTER_WHEELS_CONTEXT:-./income-verification-api/custom-adapters/wheels}
+      args:
+        IVAAS_DEPLOYMENT_SETTINGS: ${IVAAS_DEPLOYMENT_SETTINGS:-}
+    image: ${IVAAS_IMAGE:-ivaas-income-verification-api:local}
     env_file:
       - ./income-verification-api/.envs/.local/.django
       - ./income-verification-api/.envs/.local/.postgres
       - ./income-verification-api/${ADAPTERS_ENV:-.envs/.local/.adapters}
-      - path: ./income-verification-api/.envs/.local/.secrets
+      - path: ./income-verification-api/${SECRETS_ENV:-.envs/.local/.secrets}
         required: false
     environment:
       POSTGRES_HOST: postgres

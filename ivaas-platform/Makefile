@@ -90,6 +90,10 @@ db-reset: ## recreate the local docker PostgreSQL database
 up: ## start the local containerized application
 	$(COMPOSE) up --build --detach --wait
 
+.PHONY: image
+image: ## build the application image
+	$(COMPOSE) build $(DOCKER_API_NAME)
+
 .PHONY: down
 down: ## stop the local containerized application
 	$(COMPOSE) down

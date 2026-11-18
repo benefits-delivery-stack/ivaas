@@ -36,10 +36,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --no-dev --no-editable
 
 # Install adapters last, do not sync after this.
-COPY custom-adapters/ custom-adapters/
+COPY custom-adapters/install.sh custom-adapters/constraints.txt custom-adapters/
+COPY --from=adapter_wheels / custom-adapters/wheels/
 RUN custom-adapters/install.sh
 
 FROM base AS runtime
+
+ARG IVAAS_DEPLOYMENT_SETTINGS=""
+ENV IVAAS_DEPLOYMENT_SETTINGS=${IVAAS_DEPLOYMENT_SETTINGS}
 
 # Keeps Python from buffering stdout and stderr to avoid situations where
 # the application crashes without emitting any logs due to buffering.
@@ -69,6 +73,7 @@ COPY --chown=django:django income_verification /api/income_verification
 COPY --chown=django:django config /api/config
 COPY --chown=django:django adapter_engine /api/adapter_engine
 COPY --chown=django:django manage.py /api/manage.py
+COPY --from=deployment --chown=django:django / /api/deployment/
 
 USER django
 

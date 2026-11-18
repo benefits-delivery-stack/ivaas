@@ -1,0 +1,8 @@
+services:
+  income-verification-api:
+    environment:
+      # Inside the container, localhost is the container itself; the local
+      # mock publishes on the host, reachable as host.docker.internal.
+      CDLE_ACCOUNT_URL: http://host.docker.internal:8890
+      CDLE_ENVIRONMENT: DEV
+      COBEES_VMI_WEBHOOK_URL: http://program-webhook-mock:8900/mock-program/vmi-webhooks
