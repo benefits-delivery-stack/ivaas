@@ -169,12 +169,41 @@ def _delivery_conflict(request: HttpRequest, *, delivery_id: int) -> HttpRespons
     )
 
 
+def _unsupported_transmission_method(
+    request: HttpRequest, transmission_method: str
+) -> HttpResponse:
+    logger.error(
+        "Rejected unsupported transmission method for IVaaS-managed delivery: %r.",
+        transmission_method[:100],
+        extra={
+            LogField.EVENT_NAME.value: "dpw_vmi.delivery.unsupported_transmission_method",
+            LogField.ERROR_TYPE.value: "unsupported_transmission_method",
+            LogField.HTTP_RESPONSE_STATUS_CODE.value: 422,
+        },
+    )
+    return api.create_response(
+        request,
+        {
+            "error_code": "UNSUPPORTED_TRANSMISSION_METHOD",
+            "message": "The transmission method is not supported for IVaaS-managed delivery.",
+            "errors": [{"field": "transmission_method", "reason": "Must be s3."}],
+        },
+        status=422,
+    )
+
+
 def _handle_managed_transmission_complete(
     request: HttpRequest,
     body: dict[str, object],
     *,
     configuration: DpwVmiAdapterConfig,
 ) -> HttpResponse:
+    transmission_method = body.get("transmission_method")
+    if not isinstance(transmission_method, str) or not transmission_method:
+        return _validation_error(request, "transmission_method", "Must be a non-empty string.")
+    if transmission_method != "s3":
+        return _unsupported_transmission_method(request, transmission_method)
+
     object_key = _managed_object_key(
         request,
         body,
@@ -229,10 +258,7 @@ def _handle_transmission_complete(
     webhook_request_id: str,
 ) -> HttpResponse:
     configuration = cast(DpwVmiAdapterConfig, apps.get_app_config("dpw_vmi_adapter"))
-    if (
-        not configuration.program.managed_vmi_file_delivery_enabled
-        or body.get("transmission_method") != "s3"
-    ):
+    if not configuration.program.managed_vmi_file_delivery_enabled:
         return _forward_to_program(request, webhook_request_id=webhook_request_id)
     return _handle_managed_transmission_complete(request, body, configuration=configuration)
 
@@ -283,7 +309,7 @@ def _handle_webhook(request: HttpRequest, *, webhook_request_id: str) -> HttpRes
 
 @api.post(config["webhook_path"], auth=DpwVmiSignature())
 def receive_income_report(request: HttpRequest) -> HttpResponse:
-    """Forward a direct webhook and return the program's response or durably accept a managed file delivery."""
+    """Forward a direct webhook response or durably accept managed file delivery."""
     webhook_request_id = str(uuid4())
     set_webhook_request_id(webhook_request_id)
     logger.info(

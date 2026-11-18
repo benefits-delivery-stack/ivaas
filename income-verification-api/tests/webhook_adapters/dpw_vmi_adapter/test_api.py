@@ -155,12 +155,16 @@ def test_webhook_is_acknowledged(
 
 
 @pytest.mark.usefixtures("dpw_vmi_adapter")
+@pytest.mark.parametrize(
+    "transmission_method", ["s3", "sftp", "json", "shared_email", "future_method", None]
+)
 def test_direct_transmission_complete_returns_program_response(
     client: Client,
     monkeypatch: pytest.MonkeyPatch,
     forward_webhook_mock: Mock,
+    transmission_method: object,
 ) -> None:
-    body = transmission_complete_body()
+    body = transmission_complete_body(transmission_method=transmission_method)
     monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT)
     forward_webhook_mock.return_value = ProgramResponse(
         422,
@@ -383,8 +387,42 @@ def test_managed_s3_delivery_rejects_key_outside_configured_prefix(
 
 
 @pytest.mark.usefixtures("managed_vmi_file_delivery")
-@pytest.mark.parametrize("transmission_method", ["json", "shared_email", None])
-def test_managed_program_still_forwards_non_s3_transmissions(
+@pytest.mark.parametrize("transmission_method", ["sftp", "json", "shared_email", "future_method"])
+def test_managed_program_rejects_unsupported_transmission_methods(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    forward_webhook_mock: Mock,
+    transmission_method: str,
+) -> None:
+    body = transmission_complete_body(uri=None, transmission_method=transmission_method)
+    monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT)
+
+    response = client.post(
+        WEBHOOK_URL,
+        data=body,
+        content_type="application/json",
+        headers=signed_headers(body=body),
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error_code": "UNSUPPORTED_TRANSMISSION_METHOD",
+        "message": "The transmission method is not supported for IVaaS-managed delivery.",
+        "errors": [{"field": "transmission_method", "reason": "Must be s3."}],
+    }
+    forward_webhook_mock.assert_not_called()
+    failure = next(
+        record
+        for record in caplog.records
+        if record.__dict__.get("event.name") == "dpw_vmi.delivery.unsupported_transmission_method"
+    )
+    assert repr(transmission_method) in failure.getMessage()
+
+
+@pytest.mark.usefixtures("managed_vmi_file_delivery")
+@pytest.mark.parametrize("transmission_method", [None, "", 42])
+def test_managed_program_rejects_invalid_transmission_method(
     client: Client,
     monkeypatch: pytest.MonkeyPatch,
     forward_webhook_mock: Mock,
@@ -400,8 +438,11 @@ def test_managed_program_still_forwards_non_s3_transmissions(
         headers=signed_headers(body=body),
     )
 
-    assert response.status_code == 200
-    assert forward_webhook_mock.call_args.args == (body,)
+    assert response.status_code == 400
+    assert response.json()["errors"] == [
+        {"field": "transmission_method", "reason": "Must be a non-empty string."}
+    ]
+    forward_webhook_mock.assert_not_called()
 
 
 @pytest.mark.usefixtures("managed_vmi_file_delivery")
