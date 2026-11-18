@@ -120,7 +120,7 @@ class TestFromSettings:
                 adapter_settings_entry(**{"class": "tests.adapter_engine.fixtures.MissingSourceId"})
             )
 
-    @pytest.mark.parametrize("adapter_settings", [None, [], "cdle"])
+    @pytest.mark.parametrize("adapter_settings", [None, [], "example"])
     def test_non_mapping_settings_value_fails_fast(self, adapter_settings: object) -> None:
         expected = f"{INCOME_SOURCE_ADAPTERS} must be a mapping"
         with pytest.raises(ImproperlyConfigured, match=expected):

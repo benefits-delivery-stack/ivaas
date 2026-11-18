@@ -6,7 +6,7 @@
 # bounded by the shared constraints.txt file.
 set -eu
 
-wheels_dir="$(dirname "$0")/wheels"
+wheels_dir="${WHEELS_DIR:-$(dirname "$0")/wheels}"
 api_dir="$(dirname "$0")/.."
 application_venv_python="$api_dir/.venv/bin/python"
 constraints_txt="$(dirname "$0")/constraints.txt"

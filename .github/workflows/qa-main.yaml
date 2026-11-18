@@ -25,7 +25,7 @@ jobs:
     name: Run QA checks
     runs-on: ubuntu-latest
     env:
-      ADAPTERS_ENV: .envs/.ci/.adapters
+      ADAPTERS_ENV: ../../.envs/.ci/.adapters
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
 
     steps:

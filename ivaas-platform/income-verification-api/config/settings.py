@@ -11,8 +11,9 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from collections.abc import Mapping
+from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import environ
 
@@ -43,16 +44,36 @@ API_AUTHENTICATION: Mapping[str, object] = {
     "JWKS_TIMEOUT_SECONDS": env.float("AUTH_JWKS_TIMEOUT_SECONDS", default=5.0),
 }
 
-# Program-specific configuration. Program IDs are stable machine and human identifiers.
-# The presence of an adapter subkey implies integration with the corresponding adapter.
-PROGRAMS: Mapping[str, Mapping[str, Mapping[str, object]]] = {
-    "cobees": {
-        "dpw_vmi": {
-            "webhook_url": env("COBEES_VMI_WEBHOOK_URL", default=None),
-            "webhook_signing_key": env("COBEES_VMI_WEBHOOK_SIGNING_KEY", default=None),
+# A deployment may provide state-specific programs and adapters as a Python module.
+_deployment_settings_name = env.str("IVAAS_DEPLOYMENT_SETTINGS", default="")
+_deployment_settings = (
+    import_module(_deployment_settings_name) if _deployment_settings_name else None
+)
+_default_webhook_adapters: Mapping[str, Mapping[str, object]] = {
+    "dpw_vmi_adapter": {
+        "enabled": False,
+        "config": {
+            "webhook_path": env.str("DPW_VMI_WEBHOOK_PATH", default="/dpw-vmi/v1/income-report"),
+            "webhook_api_key": env.str("DPW_VMI_WEBHOOK_API_KEY", default=""),
+            "webhook_timestamp_max_age_seconds": env.int(
+                "DPW_VMI_WEBHOOK_TIMESTAMP_MAX_AGE_SECONDS", default=300
+            ),
+            "program_timeout_seconds": env.int("DPW_VMI_PROGRAM_TIMEOUT_SECONDS", default=30),
         },
     },
 }
+PROGRAMS = cast(
+    Mapping[str, Mapping[str, Mapping[str, object]]],
+    getattr(_deployment_settings, "PROGRAMS", {}),
+)
+INCOME_SOURCE_ADAPTERS = cast(
+    Mapping[str, Mapping[str, object]],
+    getattr(_deployment_settings, "INCOME_SOURCE_ADAPTERS", {}),
+)
+WEBHOOK_ADAPTERS = cast(
+    Mapping[str, Mapping[str, object]],
+    getattr(_deployment_settings, "WEBHOOK_ADAPTERS", _default_webhook_adapters),
+)
 
 
 # Application definition
@@ -151,58 +172,6 @@ LOGGING: dict[str, Any] = {
     },
 }
 
-# Adapter configurations
-
-## API Adapters
-# The class paths and config keys are opaque strings to the application instantiated by the
-# adapter registry
-
-INCOME_SOURCE_ADAPTERS: Mapping[str, Mapping[str, object]] = {
-    "cdle": {
-        "class": "cdle_adapter.CdleAdapter",
-        "enabled": env.bool("CDLE_ADAPTER_ENABLED", default=False),
-        "config": {
-            "account_url": env("CDLE_ACCOUNT_URL", default=None),
-            "account_identifier": env("CDLE_ACCOUNT_IDENTIFIER", default=None),
-            "user": env("CDLE_USER", default=None),
-            "private_key": env("CDLE_PRIVATE_KEY", default=None),
-            "environment": env("CDLE_ENVIRONMENT", default=None),
-            "timeout_seconds": env.int("CDLE_TIMEOUT_SECONDS", default=5),
-        },
-        "retry_policy": {
-            "max_attempts": env.int("CDLE_RETRY_POLICY_MAX_ATTEMPTS", default=3),
-            "backoff": {
-                "strategy": "exponential",
-                "initial_seconds": env.float(
-                    "CDLE_RETRY_POLICY_BACKOFF_INITIAL_SECONDS", default=0.5
-                ),
-                "max_seconds": env.float("CDLE_RETRY_POLICY_BACKOFF_MAX_SECONDS", default=5),
-            },
-        },
-        "circuit_breaker": {
-            "failure_threshold": env.int("CDLE_CIRCUIT_BREAKER_FAILURE_THRESHOLD", default=5),
-            "reset_timeout_seconds": env.float(
-                "CDLE_CIRCUIT_BREAKER_RESET_TIMEOUT_SECONDS", default=30
-            ),
-        },
-    },
-}
-
-## Webhook Adapters
-# Each key is a Django app module name.
-WEBHOOK_ADAPTERS: Mapping[str, Mapping[str, object]] = {
-    "dpw_vmi_adapter": {
-        "enabled": env.bool("DPW_VMI_ADAPTER_ENABLED", default=True),
-        "config": {
-            "webhook_path": env.str("DPW_VMI_WEBHOOK_PATH", default="/dpw-vmi/v1/income-report"),
-            "webhook_api_key": env.str("DPW_VMI_WEBHOOK_API_KEY", default=""),
-            "webhook_timestamp_max_age_seconds": env.int(
-                "DPW_VMI_WEBHOOK_TIMESTAMP_MAX_AGE_SECONDS", default=300
-            ),
-            "program_timeout_seconds": env.int("DPW_VMI_PROGRAM_TIMEOUT_SECONDS", default=30),
-        },
-    },
-}
 INSTALLED_APPS += [name for name, declaration in WEBHOOK_ADAPTERS.items() if declaration["enabled"]]
 
 # Each adapter logs under its own package. Route every declared adapter's package through the

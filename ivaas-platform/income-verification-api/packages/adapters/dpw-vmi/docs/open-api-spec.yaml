@@ -34,12 +34,6 @@ info:
       any other `event_type` it logs a warning and answers `200` without forwarding.
     - Report bodies carry personally identifiable information. Do not log them.
 
-servers:
-  - url: https://test.incomecheck.colorado.gov/
-    description: Test environment
-  - url: https://incomecheck.colorado.gov/
-    description: Production environment
-
 tags:
   - name: program
     description: Program-facing. Authenticated with the OAuth scheme of the main IVaaS API.

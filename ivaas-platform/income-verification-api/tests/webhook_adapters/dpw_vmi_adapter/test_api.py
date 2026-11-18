@@ -163,12 +163,13 @@ def test_webhook_forwards_other_supported_event_shapes(
 ) -> None:
     monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT)
 
-    response = client.post(
-        WEBHOOK_URL,
-        data=body,
-        content_type="application/json",
-        headers=signed_headers(body=body),
-    )
+    with caplog.at_level(logging.INFO, logger="dpw_vmi_adapter.api"):
+        response = client.post(
+            WEBHOOK_URL,
+            data=body,
+            content_type="application/json",
+            headers=signed_headers(body=body),
+        )
 
     assert response.status_code == 200
     assert forward_webhook_mock.call_args.args == (body,)
