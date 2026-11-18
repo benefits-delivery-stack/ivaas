@@ -283,7 +283,7 @@ def _handle_webhook(request: HttpRequest, *, webhook_request_id: str) -> HttpRes
 
 @api.post(config["webhook_path"], auth=DpwVmiSignature())
 def receive_income_report(request: HttpRequest) -> HttpResponse:
-    """Forward a direct webhook or durably accept a managed file delivery."""
+    """Forward a direct webhook and return the program's response or durably accept a managed file delivery."""
     webhook_request_id = str(uuid4())
     set_webhook_request_id(webhook_request_id)
     logger.info(
