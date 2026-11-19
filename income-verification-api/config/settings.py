@@ -50,6 +50,9 @@ PROGRAMS: Mapping[str, Mapping[str, Mapping[str, object]]] = {
         "dpw_vmi": {
             "webhook_url": env("COBEES_VMI_WEBHOOK_URL", default=None),
             "webhook_signing_key": env("COBEES_VMI_WEBHOOK_SIGNING_KEY", default=None),
+            "managed_vmi_file_delivery_enabled": env.bool(
+                "COBEES_VMI_MANAGED_FILE_DELIVERY_ENABLED", default=False
+            ),
         },
     },
 }
@@ -200,6 +203,7 @@ WEBHOOK_ADAPTERS: Mapping[str, Mapping[str, object]] = {
                 "DPW_VMI_WEBHOOK_TIMESTAMP_MAX_AGE_SECONDS", default=300
             ),
             "program_timeout_seconds": env.int("DPW_VMI_PROGRAM_TIMEOUT_SECONDS", default=30),
+            "s3_inbox_prefix": env.str("DPW_VMI_S3_INBOX_PREFIX", default=""),
         },
     },
 }

@@ -3,13 +3,18 @@
 import json
 import logging
 from collections.abc import Iterator
+from dataclasses import replace
 from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
+from django.apps import apps
 from django.conf import settings
+from django.db import OperationalError
 from django.test import Client, override_settings
+from dpw_vmi_adapter.apps import DpwVmiAdapterConfig
 from dpw_vmi_adapter.forwarding import ProgramResponse
+from dpw_vmi_adapter.models import DeliveryStatus, DpwVmiDocumentDelivery
 from dpw_vmi_adapter.signing import sign
 
 from income_verification.request_context import JsonLogFormatter
@@ -18,6 +23,7 @@ WEBHOOK_PATH = "/dpw-vmi/v1/income-report"
 WEBHOOK_URL = f"/api{WEBHOOK_PATH}"
 WEBHOOK_KEY = "dpw-vmi-test-key"
 SIGNED_AT = 1_700_000_000
+OBJECT_KEY = "VMI_01234567-89ab-cdef-0123-456789abcdef_20261117_Conf-TESTCONF123.tar.gz"
 BODY = (
     b'{"event_type":"ReportSubmission","report_metadata":{"confirmation_code":"report-123"},'
     b'"employment_records":42}'
@@ -31,9 +37,28 @@ PROGRAMS = {
         "dpw_vmi": {
             "webhook_url": "https://program.example/webhook",
             "webhook_signing_key": "test-webhook-signing-key",
+            "managed_vmi_file_delivery_enabled": False,
         },
     },
 }
+
+
+def transmission_complete_body(
+    *,
+    uri: object = OBJECT_KEY,
+    transmission_method: object = "s3",
+    completed_at: str = "2026-11-17T12:00:00Z",
+) -> bytes:
+    return json.dumps(
+        {
+            "event_type": "TransmissionComplete",
+            "confirmation_code": "report-123",
+            "transmission_method": transmission_method,
+            "uri": uri,
+            "completed_at": completed_at,
+        },
+        separators=(",", ":"),
+    ).encode()
 
 
 def signed_headers(
@@ -84,6 +109,18 @@ def dpw_vmi_adapter() -> Iterator[None]:
         yield
 
 
+@pytest.fixture
+def managed_vmi_file_delivery(dpw_vmi_adapter: None) -> Iterator[None]:
+    configuration = apps.get_app_config("dpw_vmi_adapter")
+    assert isinstance(configuration, DpwVmiAdapterConfig)
+    direct_program = configuration.program
+    configuration.program = replace(direct_program, managed_vmi_file_delivery_enabled=True)
+    try:
+        yield
+    finally:
+        configuration.program = direct_program
+
+
 @pytest.mark.usefixtures("dpw_vmi_adapter")
 @pytest.mark.parametrize("received_at", [SIGNED_AT - 5, SIGNED_AT + 300])
 def test_webhook_is_acknowledged(
@@ -118,11 +155,16 @@ def test_webhook_is_acknowledged(
 
 
 @pytest.mark.usefixtures("dpw_vmi_adapter")
-def test_webhook_returns_program_response(
+@pytest.mark.parametrize(
+    "transmission_method", ["s3", "sftp", "json", "shared_email", "future_method", None]
+)
+def test_direct_transmission_complete_returns_program_response(
     client: Client,
     monkeypatch: pytest.MonkeyPatch,
     forward_webhook_mock: Mock,
+    transmission_method: object,
 ) -> None:
+    body = transmission_complete_body(transmission_method=transmission_method)
     monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT)
     forward_webhook_mock.return_value = ProgramResponse(
         422,
@@ -131,9 +173,9 @@ def test_webhook_returns_program_response(
     )
     response = client.post(
         WEBHOOK_URL,
-        data=BODY,
+        data=body,
         content_type="application/json",
-        headers=signed_headers(),
+        headers=signed_headers(body=body),
     )
 
     assert response.status_code == 422
@@ -147,7 +189,7 @@ def test_webhook_returns_program_response(
     ("body", "event_type"),
     [
         (
-            b'{"event_type":"TransmissionComplete","confirmation_code":"report-123"}',
+            transmission_complete_body(),
             "TransmissionComplete",
         ),
         (b'{"report_metadata":{"confirmation_code":"report-123"}}', "ReportSubmission"),
@@ -178,6 +220,255 @@ def test_webhook_forwards_other_supported_event_shapes(
         if record.__dict__.get("event.name") == "dpw_vmi.webhook.event_handling"
     )
     assert event_type in handling.getMessage()
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("managed_vmi_file_delivery")
+def test_managed_s3_delivery_is_stored_before_acknowledgement(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    forward_webhook_mock: Mock,
+) -> None:
+    body = transmission_complete_body()
+    monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT)
+
+    response = client.post(
+        WEBHOOK_URL,
+        data=body,
+        content_type="application/json",
+        headers=signed_headers(body=body),
+    )
+
+    assert response.status_code == 200
+    assert response.content == b""
+    assert "Content-Type" not in response.headers
+    forward_webhook_mock.assert_not_called()
+    delivery = DpwVmiDocumentDelivery.objects.get()
+    assert delivery.program_id == "test-program"
+    assert delivery.confirmation_code == "report-123"
+    assert delivery.transmission_method == "s3"
+    assert delivery.source_object_key == OBJECT_KEY
+    assert bytes(delivery.raw_body) == body
+    assert delivery.vmi_timestamp == str(SIGNED_AT)
+    assert delivery.status == DeliveryStatus.PENDING_FILE
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("managed_vmi_file_delivery")
+def test_managed_s3_duplicate_keeps_first_delivery(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    forward_webhook_mock: Mock,
+) -> None:
+    first_body = transmission_complete_body()
+    retry_body = transmission_complete_body(completed_at="2026-11-17T12:01:00Z")
+    monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT + 1)
+
+    for body, timestamp in (
+        (first_body, str(SIGNED_AT)),
+        (retry_body, str(SIGNED_AT + 1)),
+    ):
+        response = client.post(
+            WEBHOOK_URL,
+            data=body,
+            content_type="application/json",
+            headers=signed_headers(body=body, timestamp=timestamp),
+        )
+        assert response.status_code == 200
+
+    forward_webhook_mock.assert_not_called()
+    assert DpwVmiDocumentDelivery.objects.count() == 1
+    delivery = DpwVmiDocumentDelivery.objects.get()
+    assert bytes(delivery.raw_body) == first_body
+    assert delivery.vmi_timestamp == str(SIGNED_AT)
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("managed_vmi_file_delivery")
+def test_managed_s3_conflict_rejects_different_object_key(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    forward_webhook_mock: Mock,
+) -> None:
+    first_body = transmission_complete_body()
+    conflicting_body = transmission_complete_body(uri="different.tar.gz")
+    monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT)
+    first_response = client.post(
+        WEBHOOK_URL,
+        data=first_body,
+        content_type="application/json",
+        headers=signed_headers(body=first_body),
+    )
+
+    response = client.post(
+        WEBHOOK_URL,
+        data=conflicting_body,
+        content_type="application/json",
+        headers=signed_headers(body=conflicting_body),
+    )
+
+    assert first_response.status_code == 200
+    assert response.status_code == 422
+    assert response.json() == {
+        "error_code": "DELIVERY_CONFLICT",
+        "message": "A different object was already accepted for this transmission.",
+        "errors": [{"field": "uri", "reason": "Conflicts with the accepted object key."}],
+    }
+    forward_webhook_mock.assert_not_called()
+    assert DpwVmiDocumentDelivery.objects.count() == 1
+    delivery = DpwVmiDocumentDelivery.objects.get()
+    assert delivery.source_object_key == OBJECT_KEY
+    assert bytes(delivery.raw_body) == first_body
+
+
+@pytest.mark.usefixtures("managed_vmi_file_delivery")
+@pytest.mark.parametrize(
+    ("uri", "reason"),
+    [
+        (None, "Must be a non-empty string."),
+        (42, "Must be a non-empty string."),
+        ("", "Must be a non-empty string."),
+        ("s3://bucket/file.tar.gz", "Must be an S3 object key, not a URL."),
+        ("\ud800.tar.gz", "Must be valid UTF-8."),
+        ("file.tar.gz.gpg", "Must identify an unencrypted .tar.gz file."),
+        ("file.zip", "Must end in .tar.gz."),
+        (f"{'a' * 1018}.tar.gz", "Must be at most 1024 bytes."),
+    ],
+)
+def test_managed_s3_delivery_rejects_invalid_object_key_before_database_access(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    forward_webhook_mock: Mock,
+    uri: object,
+    reason: str,
+) -> None:
+    body = transmission_complete_body(uri=uri)
+    monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT)
+
+    response = client.post(
+        WEBHOOK_URL,
+        data=body,
+        content_type="application/json",
+        headers=signed_headers(body=body),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["errors"] == [{"field": "uri", "reason": reason}]
+    forward_webhook_mock.assert_not_called()
+
+
+@pytest.mark.usefixtures("managed_vmi_file_delivery")
+def test_managed_s3_delivery_rejects_key_outside_configured_prefix(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    forward_webhook_mock: Mock,
+) -> None:
+    body = transmission_complete_body()
+    monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT)
+    configuration = apps.get_app_config("dpw_vmi_adapter")
+    assert isinstance(configuration, DpwVmiAdapterConfig)
+    original_prefix = configuration.s3_inbox_prefix
+    configuration.s3_inbox_prefix = "incoming/"
+    try:
+        response = client.post(
+            WEBHOOK_URL,
+            data=body,
+            content_type="application/json",
+            headers=signed_headers(body=body),
+        )
+    finally:
+        configuration.s3_inbox_prefix = original_prefix
+
+    assert response.status_code == 400
+    assert response.json()["errors"] == [
+        {"field": "uri", "reason": "Must be under the configured inbox prefix."}
+    ]
+    forward_webhook_mock.assert_not_called()
+
+
+@pytest.mark.usefixtures("managed_vmi_file_delivery")
+@pytest.mark.parametrize("transmission_method", ["sftp", "json", "shared_email", "future_method"])
+def test_managed_program_rejects_unsupported_transmission_methods(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    forward_webhook_mock: Mock,
+    transmission_method: str,
+) -> None:
+    body = transmission_complete_body(uri=None, transmission_method=transmission_method)
+    monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT)
+
+    response = client.post(
+        WEBHOOK_URL,
+        data=body,
+        content_type="application/json",
+        headers=signed_headers(body=body),
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error_code": "UNSUPPORTED_TRANSMISSION_METHOD",
+        "message": "The transmission method is not supported for IVaaS-managed delivery.",
+        "errors": [{"field": "transmission_method", "reason": "Must be s3."}],
+    }
+    forward_webhook_mock.assert_not_called()
+    failure = next(
+        record
+        for record in caplog.records
+        if record.__dict__.get("event.name") == "dpw_vmi.delivery.unsupported_transmission_method"
+    )
+    assert repr(transmission_method) in failure.getMessage()
+
+
+@pytest.mark.usefixtures("managed_vmi_file_delivery")
+@pytest.mark.parametrize("transmission_method", [None, "", 42])
+def test_managed_program_rejects_invalid_transmission_method(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    forward_webhook_mock: Mock,
+    transmission_method: object,
+) -> None:
+    body = transmission_complete_body(uri=None, transmission_method=transmission_method)
+    monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT)
+
+    response = client.post(
+        WEBHOOK_URL,
+        data=body,
+        content_type="application/json",
+        headers=signed_headers(body=body),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["errors"] == [
+        {"field": "transmission_method", "reason": "Must be a non-empty string."}
+    ]
+    forward_webhook_mock.assert_not_called()
+
+
+@pytest.mark.usefixtures("managed_vmi_file_delivery")
+def test_managed_s3_delivery_returns_503_when_database_write_fails(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    forward_webhook_mock: Mock,
+) -> None:
+    body = transmission_complete_body()
+    monkeypatch.setattr("dpw_vmi_adapter.security.time.time", lambda: SIGNED_AT)
+    monkeypatch.setattr(
+        "dpw_vmi_adapter.api.accept_document_delivery",
+        Mock(side_effect=OperationalError),
+    )
+
+    response = client.post(
+        WEBHOOK_URL,
+        data=body,
+        content_type="application/json",
+        headers=signed_headers(body=body),
+    )
+
+    assert response.status_code == 503
+    assert response.content == b""
+    assert "Content-Type" not in response.headers
+    forward_webhook_mock.assert_not_called()
 
 
 @pytest.mark.usefixtures("dpw_vmi_adapter")

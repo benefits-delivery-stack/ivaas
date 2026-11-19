@@ -17,6 +17,7 @@ class DpwVmiAdapterConfig(AppConfig):
         webhook_api_key: Secret used to verify inbound VMI signatures.
         webhook_timestamp_max_age_seconds: Maximum allowed age of a webhook timestamp.
         program_timeout_seconds: Outbound program request timeout in seconds.
+        s3_inbox_prefix: Optional object-key prefix accepted for managed file delivery.
         program: Sole program configured to receive forwarded VMI webhooks.
     """
 
@@ -31,15 +32,19 @@ class DpwVmiAdapterConfig(AppConfig):
         api_key = configuration.get("webhook_api_key")
         max_age = configuration.get("webhook_timestamp_max_age_seconds")
         timeout = configuration.get("program_timeout_seconds")
+        s3_inbox_prefix = configuration.get("s3_inbox_prefix", "")
         if not isinstance(api_key, str) or not api_key:
             raise ImproperlyConfigured("DPW VMI webhook API key must be a non-empty string.")
         if not isinstance(max_age, int) or max_age <= 0:
             raise ImproperlyConfigured("DPW VMI webhook timestamp maximum age must be positive.")
         if not isinstance(timeout, int) or timeout <= 0:
             raise ImproperlyConfigured("DPW VMI program timeout must be positive.")
+        if not isinstance(s3_inbox_prefix, str):
+            raise ImproperlyConfigured("DPW VMI S3 inbox prefix must be a string.")
         self.webhook_api_key = api_key
         self.webhook_timestamp_max_age_seconds = max_age
         self.program_timeout_seconds = timeout
+        self.s3_inbox_prefix = s3_inbox_prefix
 
         programs = configured_programs()
         if not programs:

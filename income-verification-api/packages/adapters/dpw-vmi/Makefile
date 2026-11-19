@@ -1,6 +1,6 @@
 DPW_VMI_ADAPTER_DIR := packages/adapters/dpw-vmi
 DPW_VMI_POST_WEBHOOK := $(DPW_VMI_ADAPTER_DIR)/scripts/post-webhook
-DPW_VMI_UPLOAD_S3_OBJECT := $(API_DIR)/$(DPW_VMI_ADAPTER_DIR)/scripts/upload-s3-object
+DPW_VMI_LOCAL_S3_OBJECT := $(API_DIR)/$(DPW_VMI_ADAPTER_DIR)/scripts/local-s3-object
 
 .PHONY: vmi-report-submission
 vmi-report-submission: ## post a sample VMI ReportSubmission webhook event
@@ -21,4 +21,8 @@ vmi-webhook-listener-mock: ## run a local receiver for testing forwarded VMI web
 
 .PHONY: vmi-s3-upload
 vmi-s3-upload: fakecloud-up ## upload a generated .tar.gz containing an empty .pdf to OBJECT_KEY=<object-key> in the local VMI inbox
-	@$(DPW_VMI_UPLOAD_S3_OBJECT) "$$OBJECT_KEY"
+	@$(DPW_VMI_LOCAL_S3_OBJECT) upload "$$OBJECT_KEY"
+
+.PHONY: vmi-s3-head
+vmi-s3-head: ## inspect OBJECT_KEY=<object-key> in the local VMI inbox
+	@$(DPW_VMI_LOCAL_S3_OBJECT) head "$$OBJECT_KEY"

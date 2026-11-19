@@ -9,12 +9,14 @@ from uuid import uuid4
 
 from django.apps import apps
 from django.conf import settings
+from django.db import Error as DjangoDatabaseError
 from django.http import HttpRequest, HttpResponse
 from ninja import NinjaAPI
 
 from dpw_vmi_adapter.apps import DpwVmiAdapterConfig
 from dpw_vmi_adapter.forwarding import forward_webhook
 from dpw_vmi_adapter.security import DpwVmiAuthenticationError, DpwVmiSignature
+from dpw_vmi_adapter.services import DeliveryAcceptance, accept_document_delivery
 from income_verification.request_context import LogField, set_webhook_request_id
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,12 @@ class DpwVmiEventType(StrEnum):
 
     REPORT_SUBMISSION = "ReportSubmission"
     TRANSMISSION_COMPLETE = "TransmissionComplete"
+
+
+def _empty_response(*, status: int = 200) -> HttpResponse:
+    response = HttpResponse(status=status)
+    del response.headers["Content-Type"]
+    return response
 
 
 def _return_response_to_vmi(response: HttpResponse) -> HttpResponse:
@@ -117,6 +125,144 @@ def _forward_to_program(request: HttpRequest, *, webhook_request_id: str) -> Htt
     return response
 
 
+def _managed_object_key(
+    request: HttpRequest, body: dict[str, object], *, allowed_prefix: str
+) -> str | HttpResponse:
+    value = body.get("uri")
+    if not isinstance(value, str) or not value:
+        return _validation_error(request, "uri", "Must be a non-empty string.")
+    if "://" in value:
+        return _validation_error(request, "uri", "Must be an S3 object key, not a URL.")
+    try:
+        encoded_value = value.encode()
+    except UnicodeEncodeError:
+        return _validation_error(request, "uri", "Must be valid UTF-8.")
+    if len(encoded_value) > 1024:
+        return _validation_error(request, "uri", "Must be at most 1024 bytes.")
+    if value.endswith(".tar.gz.gpg"):
+        return _validation_error(request, "uri", "Must identify an unencrypted .tar.gz file.")
+    if not value.endswith(".tar.gz"):
+        return _validation_error(request, "uri", "Must end in .tar.gz.")
+    if not value.startswith(allowed_prefix):
+        return _validation_error(request, "uri", "Must be under the configured inbox prefix.")
+    return value
+
+
+def _delivery_conflict(request: HttpRequest, *, delivery_id: int) -> HttpResponse:
+    logger.error(
+        "Rejected conflicting DPW VMI document delivery for DpwVmiDocumentDelivery id %s.",
+        delivery_id,
+        extra={
+            LogField.EVENT_NAME.value: "dpw_vmi.delivery.conflict",
+            LogField.ERROR_TYPE.value: "delivery_identity_conflict",
+            LogField.HTTP_RESPONSE_STATUS_CODE.value: 422,
+        },
+    )
+    return api.create_response(
+        request,
+        {
+            "error_code": "DELIVERY_CONFLICT",
+            "message": "A different object was already accepted for this transmission.",
+            "errors": [{"field": "uri", "reason": "Conflicts with the accepted object key."}],
+        },
+        status=422,
+    )
+
+
+def _unsupported_transmission_method(
+    request: HttpRequest, transmission_method: str
+) -> HttpResponse:
+    logger.error(
+        "Rejected unsupported transmission method for IVaaS-managed delivery: %r.",
+        transmission_method[:100],
+        extra={
+            LogField.EVENT_NAME.value: "dpw_vmi.delivery.unsupported_transmission_method",
+            LogField.ERROR_TYPE.value: "unsupported_transmission_method",
+            LogField.HTTP_RESPONSE_STATUS_CODE.value: 422,
+        },
+    )
+    return api.create_response(
+        request,
+        {
+            "error_code": "UNSUPPORTED_TRANSMISSION_METHOD",
+            "message": "The transmission method is not supported for IVaaS-managed delivery.",
+            "errors": [{"field": "transmission_method", "reason": "Must be s3."}],
+        },
+        status=422,
+    )
+
+
+def _handle_managed_transmission_complete(
+    request: HttpRequest,
+    body: dict[str, object],
+    *,
+    configuration: DpwVmiAdapterConfig,
+) -> HttpResponse:
+    transmission_method = body.get("transmission_method")
+    if not isinstance(transmission_method, str) or not transmission_method:
+        return _validation_error(request, "transmission_method", "Must be a non-empty string.")
+    if transmission_method != "s3":
+        return _unsupported_transmission_method(request, transmission_method)
+
+    object_key = _managed_object_key(
+        request,
+        body,
+        allowed_prefix=configuration.s3_inbox_prefix,
+    )
+    if isinstance(object_key, HttpResponse):
+        return object_key
+
+    try:
+        delivery, acceptance = accept_document_delivery(
+            program_id=configuration.program.program_id,
+            confirmation_code=cast(str, body["confirmation_code"]),
+            source_object_key=object_key,
+            raw_body=request.body,
+            vmi_timestamp=request.headers["X-VMI-Timestamp"],
+        )
+    except DjangoDatabaseError:
+        logger.exception(
+            "Failed to store DPW VMI document delivery.",
+            extra={
+                LogField.EVENT_NAME.value: "dpw_vmi.delivery.store_failed",
+                LogField.ERROR_TYPE.value: "database_error",
+                LogField.HTTP_RESPONSE_STATUS_CODE.value: 503,
+            },
+        )
+        return _empty_response(status=503)
+
+    if acceptance is DeliveryAcceptance.CONFLICT:
+        return _delivery_conflict(request, delivery_id=delivery.pk)
+
+    event_name = (
+        "dpw_vmi.delivery.created"
+        if acceptance is DeliveryAcceptance.CREATED
+        else "dpw_vmi.delivery.duplicate"
+    )
+    logger.info(
+        "DPW VMI document delivery %s with DpwVmiDocumentDelivery id %s.",
+        acceptance,
+        delivery.pk,
+        extra={
+            LogField.EVENT_NAME.value: event_name,
+            LogField.HTTP_RESPONSE_STATUS_CODE.value: 200,
+        },
+    )
+    return _empty_response()
+
+
+def _handle_transmission_complete(
+    request: HttpRequest,
+    body: dict[str, object],
+    *,
+    webhook_request_id: str,
+) -> HttpResponse:
+    configuration = cast(DpwVmiAdapterConfig, apps.get_app_config("dpw_vmi_adapter"))
+    if not configuration.program.managed_vmi_file_delivery_enabled:
+        return _forward_to_program(request, webhook_request_id=webhook_request_id)
+    return _handle_managed_transmission_complete(request, body, configuration=configuration)
+
+
 def _handle_webhook(request: HttpRequest, *, webhook_request_id: str) -> HttpResponse:
     try:
         body = json.loads(request.body, parse_constant=_reject_non_json_constant)
@@ -140,9 +286,7 @@ def _handle_webhook(request: HttpRequest, *, webhook_request_id: str) -> HttpRes
                 LogField.HTTP_RESPONSE_STATUS_CODE.value: 200,
             },
         )
-        response = HttpResponse(status=200)
-        del response.headers["Content-Type"]
-        return response
+        return _empty_response()
 
     error = _validate_webhook_body(request, body, event_type)
     if error is not None:
@@ -152,12 +296,20 @@ def _handle_webhook(request: HttpRequest, *, webhook_request_id: str) -> HttpRes
         event_type,
         extra={LogField.EVENT_NAME.value: "dpw_vmi.webhook.event_handling"},
     )
-    return _forward_to_program(request, webhook_request_id=webhook_request_id)
+    match event_type:
+        case DpwVmiEventType.REPORT_SUBMISSION:
+            return _forward_to_program(request, webhook_request_id=webhook_request_id)
+        case DpwVmiEventType.TRANSMISSION_COMPLETE:
+            return _handle_transmission_complete(
+                request,
+                body,
+                webhook_request_id=webhook_request_id,
+            )
 
 
 @api.post(config["webhook_path"], auth=DpwVmiSignature())
 def receive_income_report(request: HttpRequest) -> HttpResponse:
-    """Forward a validated DPW webhook and return the program's response."""
+    """Forward a direct webhook response or durably accept managed file delivery."""
     webhook_request_id = str(uuid4())
     set_webhook_request_id(webhook_request_id)
     logger.info(

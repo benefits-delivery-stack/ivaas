@@ -146,6 +146,7 @@ quality-check: ## run all required checks
 	$(RUN_NO_SYNC) ruff format --check . ../e2e_tests
 	$(RUN_NO_SYNC) ruff check . ../e2e_tests
 	$(MANAGE) check
+	$(MANAGE) makemigrations --check --dry-run
 	$(LOCAL_RUN) mypy .
 	$(LOCAL_RUN) mypy ../e2e_tests
 
