@@ -2,6 +2,17 @@ include:
   - ./income-verification-api/packages/adapters/dpw-vmi/compose.yaml
 
 services:
+  fakecloud:
+    image: ghcr.io/faiscadev/fakecloud:sha-bb8bf58@sha256:368b2846c7418717f55b2a2037f415187d7867f7233fa2630dc56f2bb569129b
+    profiles: [tools]
+    ports:
+      - "127.0.0.1:4566:4566"
+    healthcheck:
+      test: ["CMD", "fakecloud", "healthcheck"]
+      start_period: 2s
+      interval: 5s
+      timeout: 3s
+      retries: 3
   postgres:
     image: postgres:17
     env_file:
