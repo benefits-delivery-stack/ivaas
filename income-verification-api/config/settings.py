@@ -94,11 +94,11 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": env("POSTGRES_DB"),
-        "USER": env("POSTGRES_USER"),
-        "PASSWORD": env("POSTGRES_PASSWORD"),
-        "HOST": env("POSTGRES_HOST"),
-        "PORT": env.int("POSTGRES_PORT"),
+        "NAME": env("POSTGRES_DB", default=None),
+        "USER": env("POSTGRES_USER", default=None),
+        "PASSWORD": env("POSTGRES_PASSWORD", default=None),
+        "HOST": env("POSTGRES_HOST", default=None),
+        "PORT": env.int("POSTGRES_PORT", default=None),
     },
 }
 
