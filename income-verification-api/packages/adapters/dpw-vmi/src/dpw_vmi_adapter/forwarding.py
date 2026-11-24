@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from email.message import Message
 from http.client import HTTPException, HTTPResponse
 from typing import IO, override
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from dpw_vmi_adapter.programs import DpwVmiProgram
@@ -92,11 +92,12 @@ def forward_webhook(
         response = _opener.open(request, timeout=timeout_seconds)
     except HTTPError as error:
         response = error
-    except HTTPException, OSError:
+    except (HTTPException, OSError) as error:
         return _log_send_failure(
             program.program_id,
             ProgramResponse(504, b"", None),
             error_type="network_failure",
+            error=error,
             exc_info=True,
         )
 
@@ -175,15 +176,34 @@ def _log_send_failure(
     response: ProgramResponse,
     *,
     error_type: str,
+    error: HTTPException | OSError,
     exc_info: bool = False,
 ) -> ProgramResponse:
-    logger.error(
-        "Failed to send DPW VMI webhook to program.",
-        extra={
-            "event.name": "dpw_vmi.program_webhook.send_failed",
-            "error.type": error_type,
-            "ivaas.program.id": program_id,
-        },
-        exc_info=exc_info,
-    )
+    extra = {
+        "event.name": "dpw_vmi.program_webhook.send_failed",
+        "error.type": error_type,
+        "ivaas.program.id": program_id,
+    }
+    if error_type == "network_failure":
+        cause = error
+        if isinstance(error, URLError) and isinstance(error.reason, OSError):
+            cause = error.reason
+        code = (
+            f" (code {cause.errno})"
+            if isinstance(cause, OSError) and isinstance(cause.errno, int)
+            else ""
+        )
+        logger.error(
+            "Failed to send DPW VMI webhook to program. Network error: %s%s.",
+            type(cause).__name__,
+            code,
+            extra=extra,
+            exc_info=exc_info,
+        )
+    else:
+        logger.error(
+            "Failed to send DPW VMI webhook to program.",
+            extra=extra,
+            exc_info=exc_info,
+        )
     return response

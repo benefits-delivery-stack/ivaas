@@ -1,6 +1,8 @@
 """Check forwarding authenticated DPW VMI webhooks to a program."""
 
+import json
 import logging
+import socket
 from email.message import Message
 from http.client import IncompleteRead
 from io import BytesIO
@@ -15,6 +17,8 @@ from dpw_vmi_adapter import forwarding
 from dpw_vmi_adapter.forwarding import ProgramResponse, forward_webhook
 from dpw_vmi_adapter.programs import DpwVmiProgram
 from dpw_vmi_adapter.signing import verify
+
+from income_verification.request_context import JsonLogFormatter
 
 BODY = b'{"event_type":"ReportSubmission"}'
 PROGRAM = DpwVmiProgram(
@@ -208,13 +212,20 @@ def test_forward_webhook_rejects_program_redirect(
 
 
 @pytest.mark.parametrize(
-    "error",
-    [URLError("unreachable"), TimeoutError(), IncompleteRead(b"partial")],
+    ("error", "reason"),
+    [
+        (URLError(socket.gaierror(-2, "private-host.example")), "gaierror (code -2)"),
+        (URLError("private-host.example"), "URLError"),
+        (TimeoutError("private-host.example"), "TimeoutError"),
+        (OSError("private-host.example", "error"), "OSError"),
+        (IncompleteRead(b"partial"), "IncompleteRead"),
+    ],
 )
 def test_forward_webhook_returns_gateway_timeout_for_network_failure(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     error: Exception,
+    reason: str,
 ) -> None:
     monkeypatch.setattr(forwarding._opener, "open", Mock(side_effect=error))
 
@@ -234,6 +245,23 @@ def test_forward_webhook_returns_gateway_timeout_for_network_failure(
         if record.__dict__.get("event.name") == "dpw_vmi.program_webhook.send_failed"
     )
     assert send_failed.levelno == logging.ERROR
+    serialized = json.loads(JsonLogFormatter().format(send_failed))
+    assert serialized["error.type"] == "network_failure"
+    assert serialized["message"].endswith(f"Network error: {reason}.")
+    assert "private-host.example" not in serialized["message"]
+
+
+def test_log_send_failure_keeps_other_errors_generic(caplog: pytest.LogCaptureFixture) -> None:
+    forwarding._log_send_failure(
+        PROGRAM.program_id,
+        ProgramResponse(504, b"", None),
+        error_type="other_failure",
+        error=OSError("private-host.example"),
+    )
+
+    serialized = json.loads(JsonLogFormatter().format(caplog.records[-1]))
+    assert serialized["error.type"] == "other_failure"
+    assert serialized["message"] == "Failed to send DPW VMI webhook to program."
 
 
 def test_forward_webhook_keeps_status_when_program_response_is_too_large(
