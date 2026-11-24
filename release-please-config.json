@@ -1,0 +1,37 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "include-component-in-tag": true,
+  "include-v-in-tag": true,
+  "bump-minor-pre-major": false,
+  "pull-request-title-pattern": "chore(release): release${component} ${version}",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "income-verification-api/pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "income-verification-api/uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='income-verification-api')].version"
+        }
+      ]
+    }
+  },
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance Improvements" },
+    { "type": "revert", "section": "Reverts" },
+    { "type": "docs", "section": "Documentation" },
+    { "type": "style", "section": "Internal Updates" },
+    { "type": "refactor", "section": "Internal Updates" },
+    { "type": "test", "section": "Internal Updates" },
+    { "type": "build", "section": "Internal Updates" },
+    { "type": "ci", "section": "Internal Updates" },
+    { "type": "chore", "section": "Internal Updates" }
+  ]
+}
