@@ -28,17 +28,30 @@ jobs:
         with:
           file: income-verification-api/uv.lock
           format: cyclonedx-json
-          output-file: ivaas-sbom-uv.cdx.json
+          output-file: sbom-uv.cdx.json
           upload-artifact: false
 
       - name: Build income-verification-api image
         run: |
-          ls -la
-          docker build -f income-verificaton-api/Dockerfile -t income-verification-api:latest income-verification-api
+          docker build -f income-verification-api/Dockerfile -t income-verification-api:latest income-verification-api
 
       - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           image: income-verification-api:latest
           format: cyclonedx-json
-          output-file: ivaas-sbom-image.cdx.json
+          output-file: sbom-image.cdx.json
           upload-artifact: false
+
+      - name: Merge SBOMs
+        run: |
+          # pin sha digest of cyclonedx/cyclonedx-cli:0.33.1
+          docker run --rm -v "$PWD:/work" -w /work \
+            cyclonedx/cyclonedx-cli@sha256:252c2e26f468c25fea1e63ecde1bc3198ad6e9dbb57f5ed3236bddcb2281b3a7 \
+            merge \
+              --input-files sbom-uv.cdx.json sbom-image.cdx.json \
+              --input-format json \
+              --output-file sbom-combined.cdx.json \
+              --output-format json \
+              --hierarchical \
+              --name benefits-delivery-stack/ivaas \
+              --version "${GITHUB_SHA}"
