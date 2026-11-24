@@ -1,0 +1,39 @@
+name: Generate SBOM
+
+on:
+  push:
+    branches:
+      - jsc/add-sbom-generation
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - format: spdx-json
+            ext: spdx.json
+          - format: cyclonedx-json
+            ext: cyclonedx.json
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: income-verification-api/uv.lock
+          format: ${{ matrix.format }}
+          output-file: ivaas-sbom.${{ matrix.ext }}
