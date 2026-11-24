@@ -17,8 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      SBOM_ARTIFACTS: ${RUNNER_TEMP}/sboms
 
     steps:
       - name: Check out repository
@@ -26,12 +24,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Ensure sbom artifacts directory exists
+      - name: Create sbom artifacts directory
         run: |
-          mkdir -p "${SBOM_ARTIFACTS}"
-          cd "${SBOM_ARTIFACTS}"
-          pwd
-          ls -la
+          SBOM_ARTIFACTS_DIR="${RUNNER_TEMP}/sboms"
+          mkdir -p "${SBOM_ARTIFACTS_DIR}"
+          echo "SBOM_ARTIFACTS=${SBOM_ARTIFACTS_DIR}" >> "${GITHUB_ENV}"
 
       - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
