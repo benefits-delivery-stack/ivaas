@@ -17,14 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - format: spdx-json
-            ext: spdx.json
-          - format: cyclonedx-json
-            ext: cyclonedx.json
 
     steps:
       - name: Check out repository
@@ -35,5 +27,16 @@ jobs:
       - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           file: income-verification-api/uv.lock
-          format: ${{ matrix.format }}
-          output-file: ivaas-sbom.${{ matrix.ext }}
+          format: cyclonedx-json
+          output-file: ivaas-sbom-uv.cdx.json
+          upload-artifact: false
+
+      - name: Build income-verification-api image
+        run: docker build -f income-verificaton-api/Dockerfile -t income-verification-api:latest income-verification-api
+
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: income-verification-api:latest
+          format: cyclonedx-json
+          output-file: ivaas-sbom-image.cdx.json
+          upload-artifact: false
