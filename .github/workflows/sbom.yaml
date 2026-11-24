@@ -25,16 +25,17 @@ jobs:
           persist-credentials: false
 
       - name: Create sbom artifacts directory
+        id: paths
         run: |
           SBOM_ARTIFACTS_DIR="${RUNNER_TEMP}/sboms"
           mkdir -p "${SBOM_ARTIFACTS_DIR}"
-          echo "SBOM_ARTIFACTS=${SBOM_ARTIFACTS_DIR}" >> "${GITHUB_ENV}"
+          echo "sbom_artifacts=${SBOM_ARTIFACTS_DIR}" >> "${GITHUB_OUTPUT}"
 
       - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           file: income-verification-api/uv.lock
           format: cyclonedx-json
-          output-file: ${SBOM_ARTIFACTS}/sbom-uv.cdx.json
+          output-file: ${{ steps.paths.outputs.sbom_artifacts }}/sbom-uv.cdx.json
           upload-artifact: false
 
       - name: Build income-verification-api image
@@ -45,10 +46,12 @@ jobs:
         with:
           image: income-verification-api:latest
           format: cyclonedx-json
-          output-file: ${SBOM_ARTIFACTS}/sbom-image.cdx.json
+          output-file: ${{ steps.paths.outputs.sbom_artifacts }}/sbom-image.cdx.json
           upload-artifact: false
 
       - name: Merge SBOMs
+        env:
+          SBOM_ARTIFACTS: ${{ steps.paths.outputs.sbom_artifacts }}
         run: |
           # pin sha digest of cyclonedx/cyclonedx-cli:0.33.1
           docker run --rm -v "${SBOM_ARTIFACTS}:/work" -w /work \
@@ -69,4 +72,4 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sbom-combined
-          path: ${SBOM_ARTIFACTS}/sbom-combined.cdx.json
+          path: ${{ steps.paths.outputs.sbom_artifacts }}/sbom-combined.cdx.json
