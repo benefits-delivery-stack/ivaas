@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      SBOM_ARTIFACTS: ${RUNNER_TEMP}/sboms
 
     steps:
       - name: Check out repository
@@ -28,7 +30,7 @@ jobs:
         with:
           file: income-verification-api/uv.lock
           format: cyclonedx-json
-          output-file: sbom-uv.cdx.json
+          output-file: ${SBOM_ARTIFACTS}/sbom-uv.cdx.json
           upload-artifact: false
 
       - name: Build income-verification-api image
@@ -39,13 +41,13 @@ jobs:
         with:
           image: income-verification-api:latest
           format: cyclonedx-json
-          output-file: sbom-image.cdx.json
+          output-file: ${SBOM_ARTIFACTS}/sbom-image.cdx.json
           upload-artifact: false
 
       - name: Merge SBOMs
         run: |
           # pin sha digest of cyclonedx/cyclonedx-cli:0.33.1
-          docker run --rm -v "$PWD:/work" -w /work \
+          docker run --rm -v "${SBOM_ARTIFACTS}:/work" -w /work \
             cyclonedx/cyclonedx-cli@sha256:252c2e26f468c25fea1e63ecde1bc3198ad6e9dbb57f5ed3236bddcb2281b3a7 \
             merge \
               --input-files sbom-uv.cdx.json sbom-image.cdx.json \
@@ -55,3 +57,12 @@ jobs:
               --hierarchical \
               --name benefits-delivery-stack/ivaas \
               --version "${GITHUB_SHA}"
+
+          docker run --rm -v "${SBOM_ARTIFACTS}:/work" -w /work \
+            cyclonedx/cyclonedx-cli@sha256:252c2e26f468c25fea1e63ecde1bc3198ad6e9dbb57f5ed3236bddcb2281b3a7 \
+            validate --input-file sbom-combined.cdx.json --fail-on-errors
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-combined
+          path: ${SBOM_ARTIFACTS}/sbom-combined.cdx.json
